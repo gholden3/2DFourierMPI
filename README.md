@@ -1,1 +1,1 @@
-# 2DFourierMIP
+# 2DFourier MPI

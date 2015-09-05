@@ -10,7 +10,7 @@
 #include <vector>
 #include <signal.h>
 #include <math.h>
-#include <mpi.h>
+//#include <mpi.h>
 
 #include "Complex.h"
 #include "InputImage.h"
@@ -19,7 +19,10 @@ using namespace std;
 
 
 void Transform2D(const char* inputFN) 
-{ // Do the 2D transform here.
+{ 
+  int w, h;
+  Complex* myData;
+ // Do the 2D transform here.
   // 1) Use the InputImage object to read in the Tower.txt file and
   //    find the width/height of the input image.
   // 2) Use MPI to find how many CPUs in total, and which one
@@ -37,9 +40,15 @@ void Transform2D(const char* inputFN)
   // 9) Send final answers to CPU 0 (unless you are CPU 0)
   //   9a) If you are CPU 0, collect all values from other processors
   //       and print out with SaveImageData().
+
+  // Step (1) in the comments is the line above.  
   InputImage image(inputFN);  // Create the helper object for reading the image
-  // Step (1) in the comments is the line above.
+  w = image.GetWidth();
+  h = image.GetHeight();
+  myData = image.GetImageData();
+
   // Your code here, steps 2-9
+  image.SaveImageData("outData.txt", myData, w, h);
 }
 
 void Transform1D(Complex* h, int w, Complex* H)
