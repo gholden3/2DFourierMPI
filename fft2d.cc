@@ -140,9 +140,9 @@ void Transform2D(const char* inputFN)
               }
           } 
       }
+      image.SaveImageData("outData.txt", OneDResultArr, w, h);
     }
 
-  image.SaveImageData("outData.txt", OneDResultArr, w, h);
 }
 
 
