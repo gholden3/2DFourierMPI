@@ -12,11 +12,13 @@
 #include <math.h>
 #include <mpi.h>
 #include <stdlib.h>
+#include <cmath>
 
 #include "Complex.h"
 #include "InputImage.h"
 
 #define MSG_SIZE 1000
+#define _USE_MATH_DEFINES
 
 char buf[MSG_SIZE]; //message buffer to send and recieve data from other CPUs
 
@@ -24,11 +26,32 @@ using namespace std;
 
 
 
-void Transform1D(Complex* h, int w, Complex* H)
-{
+void Transform1D(Complex* h, int N, Complex* H)
+{ 
+ // int runningSum = 0;
+  double angle;
+  double sumReal;
+  double sumImag;
+//  Complex hOfk; // h[k] 
+ // Complex newNum;
   // Implement a simple 1-d DFT using the double summation equation
   //   // given in the assignment handout.  h is the time-domain input
   //     // data, w is the width (N), and H is the output array.
+  for (int n = 0; n < N; ++n)
+    { // for each element
+    sumReal = 0;
+    sumImag = 0;
+    for (int k=0; k<N;k++) //sum accross all the elements
+      {
+     // hOfk = h[k];
+      angle = 2 * M_PI * n * k / N;
+      sumReal +=  h[k].real * cos(angle) + h[k].imag * sin(angle);
+      sumImag +=  -h[k].real * sin(angle) + h[k].imag * cos(angle);
+     // runningSum = runningSum + (M_E)^(((-sqrt(-1))*2*m_PI)/N)
+      }
+    H[n].real = sumReal;
+    H[n].imag = sumImag;
+    }
 }
 
 void Transform2D(const char* inputFN) 
@@ -79,14 +102,13 @@ void Transform2D(const char* inputFN)
     { // for each row
     hPtr = myData + r * w; //where to start reading that row's input data
     HPtr = resultArray + r * w; //where to start writing that row's output data
-    //print out the row to make sure we are sending it correctly
+    /*print out the row to make sure we are sending it correctly
     ofs  << "sending row: " << r << "." << endl;
     for (int c = 0; c < w; ++c)
       { // for each column
       ofs << hPtr[c].Mag() << " ";
       }
-    ofs << endl;
-
+    ofs << endl;*/
     Transform1D(hPtr, w, HPtr); //transform that row and write into resultArray
     }
 
@@ -104,9 +126,7 @@ int main(int argc, char** argv)
   if(rc!=MPI_SUCCESS){
     MPI_Abort(MPI_COMM_WORLD, rc);
   }
-
   Transform2D(fn.c_str()); // Perform the transform.
- 
   // Finalize MPI here
   MPI_Finalize(); 
  
