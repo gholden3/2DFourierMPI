@@ -20,7 +20,7 @@
 #define MSG_SIZE 1000
 #define _USE_MATH_DEFINES
 
-char buf[MSG_SIZE]; //message buffer to send and recieve data from other CPUs
+Complex  buf[MSG_SIZE]; //message buffer to send and recieve data from other CPUs
 
 using namespace std;
 
@@ -32,8 +32,6 @@ void Transform1D(Complex* h, int N, Complex* H)
   double angle;
   double sumReal;
   double sumImag;
-//  Complex hOfk; // h[k] 
- // Complex newNum;
   // Implement a simple 1-d DFT using the double summation equation
   //   // given in the assignment handout.  h is the time-domain input
   //     // data, w is the width (N), and H is the output array.
@@ -58,12 +56,13 @@ void Transform2D(const char* inputFN)
 { 
 
   int w, h;
-  int numtasks, rank;
+  int numCPUs, rank, rc, rowsPerCPU;
 
   Complex* myData;  
-  Complex* resultArray;
   Complex* hPtr;
   Complex* HPtr;
+  Complex* OneDResultArr;
+  Complex* recieveArr;
 
   ofstream ofs("outFileG.txt"); //output file for debugging and testing
   ofs << "Hello world!" << endl;
@@ -85,34 +84,65 @@ void Transform2D(const char* inputFN)
   h = image.GetHeight();
 
   // 2) Use MPI to find how many CPUs in total, and which one this process is
-  MPI_Comm_size(MPI_COMM_WORLD, &numtasks); //how many CPUs? 
+  MPI_Comm_size(MPI_COMM_WORLD, &numCPUs); //how many CPUs? 
   MPI_Comm_rank(MPI_COMM_WORLD, &rank); //which CPU am I?
-  ofs  << "Number of tasks= " << numtasks << ".  My rank= " << rank<< endl;
+  if(rank==1)
+  ofs  << "Number of tasks= " << numCPUs << ".  My rank= " << rank<< endl;
 
   // 3) Allocate an array of Complex object of sufficient size to
   //     hold the 2d DFT results (size is width * height)
-  resultArray = new Complex[w*h]; //output array. 
-
+  OneDResultArr = new Complex[w*h]; //output array. 
+ 
   // 4) Obtain a pointer to the Complex 1d array of input data
   myData = image.GetImageData();
 
   // 5) Do the individual 1D transforms on the rows assigned to your CPU
-  //lets just do all on one CPU to start.
-  for (int r = 0; r < h; ++r)
-    { // for each row
-    hPtr = myData + r * w; //where to start reading that row's input data
-    HPtr = resultArray + r * w; //where to start writing that row's output data
-    /*print out the row to make sure we are sending it correctly
-    ofs  << "sending row: " << r << "." << endl;
-    for (int c = 0; c < w; ++c)
-      { // for each column
-      ofs << hPtr[c].Mag() << " ";
-      }
-    ofs << endl;*/
+  rowsPerCPU = h / numCPUs;
+  //if(rank==1)
+  //ofs<< "rowsPerCPU: " << rowsPerCPU << endl;
+  int rowStart = rowsPerCPU * rank; // the row I need to start my 1D transforms on
+  int rowEnd = rowStart + rowsPerCPU; // the row I need to end on
+  //if(rank==1){
+  //ofs << "I need to start my transformations on row: " << rowStart 
+  //    << ". I need to end on row: " << rowEnd << endl;
+  //}
+  for(rowStart; rowStart<rowEnd;rowStart++)
+    { // for each row of work 
+    Complex* hPtr  = myData + rowStart *w; //where to start reading input data
+    Complex* HPtr = OneDResultArr + rowStart *w; //where to start writing output data
     Transform1D(hPtr, w, HPtr); //transform that row and write into resultArray
+    } 
+  if(rank != 0) // send my transform back to CPU 0 
+    {
+    //if(rank==1)
+    //ofs << "i'm rank " <<  rank << "sending back to rank 0." << endl;
+    rc = MPI_Send(OneDResultArr, w*h, MPI_COMPLEX, 0, 0, MPI_COMM_WORLD);
+    }
+  if(rank == 0)
+    { //my work is already in correct place in 1DResultArr
+      //block recieve all the other ones
+      for(int i = 1; i<numCPUs; i++)
+      { int recSize = w*h;
+        recieveArr = new Complex[recSize];
+        MPI_Status status;
+        rc = MPI_Recv(recieveArr, recSize, MPI_COMPLEX, i, 0, MPI_COMM_WORLD, &status);
+        //put that array into the correct place in 1DResultArr
+        rowStart = rowsPerCPU * i; // the row that computations started on
+        rowEnd = rowStart + rowsPerCPU;
+        for(rowStart; rowStart<rowEnd;rowStart++)
+          { // for each row of work 
+            for(int j=0;j<w;j++) //for each column
+              { 
+              Complex* hPtr  = recieveArr + (rowStart * w); //row to start reading
+              Complex* HPtr = OneDResultArr + (rowStart * w) ; //row to start writing
+              HPtr[j].real = hPtr[j].real;
+              HPtr[j].imag = hPtr[j].imag;
+              }
+          } 
+      }
     }
 
-  image.SaveImageData("outData.txt", resultArray, w, h);
+  image.SaveImageData("outData.txt", OneDResultArr, w, h);
 }
 
 
@@ -133,4 +163,4 @@ int main(int argc, char** argv)
 }  
   
 
-  
+ 
