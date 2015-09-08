@@ -114,31 +114,18 @@ void Transform2D(const char* inputFN)
     } 
   if(rank != 0) // send my transform back to CPU 0 
     {
-    //if(rank==1)
-    //ofs << "i'm rank " <<  rank << "sending back to rank 0." << endl;
+    //pointer to send  = OneDResultArr + rowsPerCPU* rank *width
     rc = MPI_Send(OneDResultArr, w*h, MPI_COMPLEX, 0, 0, MPI_COMM_WORLD);
     }
   if(rank == 0)
     { //my work is already in correct place in 1DResultArr
       //block recieve all the other ones
       for(int i = 1; i<numCPUs; i++)
-      { int recSize = w*h;
-        recieveArr = new Complex[recSize];
+      { //recSize = rowsPerCPU * width
+        int recSize = w*h;
+        //recPtr = OneDResultArr + rowsPerCPU*i*w
         MPI_Status status;
         rc = MPI_Recv(recieveArr, recSize, MPI_COMPLEX, i, 0, MPI_COMM_WORLD, &status);
-        //put that array into the correct place in 1DResultArr
-        rowStart = rowsPerCPU * i; // the row that computations started on
-        rowEnd = rowStart + rowsPerCPU;
-        for(rowStart; rowStart<rowEnd;rowStart++)
-          { // for each row of work 
-            for(int j=0;j<w;j++) //for each column
-              { 
-              Complex* hPtr  = recieveArr + (rowStart * w); //row to start reading
-              Complex* HPtr = OneDResultArr + (rowStart * w) ; //row to start writing
-              HPtr[j].real = hPtr[j].real;
-              HPtr[j].imag = hPtr[j].imag;
-              }
-          } 
       }
       image.SaveImageData("outData.txt", OneDResultArr, w, h);
     }
