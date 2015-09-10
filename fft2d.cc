@@ -63,7 +63,7 @@ void Transform2D(const char* inputFN)
   Complex* recvPtr;
   Complex* columnSendArr; //filled by CPU0 to send cols to other CPUs
   Complex* columnRecvArr; //filled by 1DFourier transform of cols
-
+  MPI_Status status;
   //ofstream ofs("outFileG.txt"); //output file for debugging and testing
  // Do the 2D transform here.
   // 6) Send the resultant transformed values to the appropriate
@@ -99,27 +99,40 @@ void Transform2D(const char* inputFN)
 
   // 5) Do the individual 1D transforms on the rows assigned to your CPU
   rowsPerCPU = h / numCPUs;
-  columnRecvArr = new Complex[rowsPerCPU*h];
   int colsPerCPU = w / numCPUs;
+  columnRecvArr = new Complex[colsPerCPU*h];
   int rowStart = rowsPerCPU * rank; // the row I need to start my 1D transforms on
   int rowEnd = rowStart + rowsPerCPU; // the row I need to end on
   columnSendArr = new Complex[colsPerCPU*h];
-
+  int colMsgSize = colsPerCPU*h*sizeof(Complex);
   for(rowStart; rowStart<rowEnd;rowStart++)
     { // for each row of work 
-    Complex* hPtr  = myData + rowStart *w; //where to start reading input data
-    Complex* HPtr = OneDResultArr + rowStart *w; //where to start writing output data
+    hPtr  = myData + rowStart *w; //where to start reading input data
+    HPtr = OneDResultArr + rowStart *w; //where to start writing output data
     Transform1D(hPtr, w, HPtr); //transform that row and write into resultArray
     }
      
   int msgSize = rowsPerCPU*w * sizeof(Complex);
-
+  
   if(rank != 0) // send my transform back to CPU 0 
     {//sendPtr points to where my rows start
     sendPtr = OneDResultArr + rowsPerCPU*rank*w;
     //each CPU sends its work back to CPU 0
     rc = MPI_Send(sendPtr, msgSize, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
     // now needs to receive the row array, perform transforms, and send row array back
+       
+    rc =  MPI_Recv(columnSendArr,colMsgSize,MPI_CHAR,MPI_ANY_SOURCE,0,MPI_COMM_WORLD, &status);
+    hPtr = columnSendArr;
+    HPtr = columnRecvArr;
+
+    for(int r =0; r<colsPerCPU;r++)//for each row in column array
+      {
+      Transform1D(hPtr, w, HPtr);
+      hPtr += w;
+      HPtr += w;
+      }
+    //now send columnRecvArr back to CPU0
+    rc = MPI_Send(columnRecvArr,colMsgSize,MPI_CHAR,0,0,MPI_COMM_WORLD);
     }
   if(rank == 0)
     { //my work is already in correct place in 1DResultArr
@@ -131,24 +144,26 @@ void Transform2D(const char* inputFN)
         rc = MPI_Recv(recvPtr, msgSize, MPI_CHAR, i, 0, MPI_COMM_WORLD, &status);
         }
       //CPU0 now needs to send each column to the other CPUs
-      /*
-      int colMsgSize = colsPerCPU*h*sizeof(Complex);
+    
+
       for(int i=1;i<numCPUs; i++)//for each cpu
       {//fill the send array and send it all its columns
         int startCol = i*colsPerCPU;
-        for(int j = startCol;j<(startCol+colsPerCPU);j++)//for each column I need to send
+        int endCol = startCol+colsPerCPU;
+        for( int j= startCol;j<endCol;j++)//for each column I need to send
           {
            //for each row I need to send
            for(int r =0;r<h;r++)
              {
              //put data into send array
-             columnSendArr[j*w+r] = OneDResultArr[r*w +j];
+             columnSendArr[(j-startCol)*w+r] = OneDResultArr[r*w +j];
              }
           }
         //when columnSendArr is full, send it to the right CPU
-        //rc =  MPI_Send(columnSendArr,colMsgSize,MPI_CHAR,i,0,MPI_COMM_WORLD);
+        rc =  MPI_Send(columnSendArr,colMsgSize,MPI_CHAR,i,0,MPI_COMM_WORLD);
       }
-      */
+
+      
       //here CPU0 does its work on columns on OneDResultArr
       for(int j = 0;j<colsPerCPU;j++)//for each column 
         {
@@ -170,7 +185,7 @@ void Transform2D(const char* inputFN)
         }
       //write results into columns of TwoDResultArray
       for(int i=0;i<colsPerCPU;i++)//for each row 
-        {
+        { 
         //for each column
         for(int j =0;j<w;j++)
           {
@@ -178,6 +193,23 @@ void Transform2D(const char* inputFN)
           TwoDResultArr[j*w+i] = columnRecvArr[i*w+j]; 
           }
         }
+
+       for(int i = 1; i<numCPUs; i++)//for each CPU, receive columns
+        {
+        MPI_Status status;
+        rc = MPI_Recv(columnRecvArr, colMsgSize, MPI_CHAR, i, 0, MPI_COMM_WORLD, &status);
+        for(int k=0;k<colsPerCPU;k++)//for each row 
+          {
+          //for each column
+          for(int j =0;j<w;j++)
+            {
+            //put data into array (flipping back into columns)
+            int flatIndex = (j*w)+k+(i*colsPerCPU);
+            TwoDResultArr[flatIndex] = columnRecvArr[k*w+j];
+            }
+          }
+        }
+
       image.SaveImageData("MyAfter2d.txt", TwoDResultArr, w, h);
     }
 }
