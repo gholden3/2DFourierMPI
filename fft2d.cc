@@ -28,24 +28,21 @@ using namespace std;
 
 void Transform1D(Complex* h, int N, Complex* H)
 { 
- // int runningSum = 0;
   double angle;
   double sumReal;
   double sumImag;
-  // Implement a simple 1-d DFT using the double summation equation
-  //   // given in the assignment handout.  h is the time-domain input
-  //     // data, w is the width (N), and H is the output array.
+  /* Implement a simple 1-d DFT using the double summation equation
+  given in the assignment handout.  h is the time-domain input
+  data, w is the width (N), and H is the output array. */
   for (int n = 0; n < N; ++n)
     { // for each element
     sumReal = 0;
     sumImag = 0;
     for (int k=0; k<N;k++) //sum accross all the elements
       {
-     // hOfk = h[k];
       angle = 2 * M_PI * n * k / N;
       sumReal +=  h[k].real * cos(angle) + h[k].imag * sin(angle);
       sumImag +=  -h[k].real * sin(angle) + h[k].imag * cos(angle);
-     // runningSum = runningSum + (M_E)^(((-sqrt(-1))*2*m_PI)/N)
       }
     H[n].real = sumReal;
     H[n].imag = sumImag;
@@ -54,7 +51,6 @@ void Transform1D(Complex* h, int N, Complex* H)
 
 void Transform2D(const char* inputFN) 
 { 
-
   int w, h;
   int numCPUs, rank, rc, rowsPerCPU;
 
@@ -62,10 +58,13 @@ void Transform2D(const char* inputFN)
   Complex* hPtr;
   Complex* HPtr;
   Complex* OneDResultArr;
-  Complex* recieveArr;
+  Complex* TwoDResultArr;
+  Complex* sendPtr;
+  Complex* recvPtr;
+  Complex* columnSendArr; //filled by CPU0 to send cols to other CPUs
+  Complex* columnRecvArr; //filled by 1DFourier transform of cols
 
-  ofstream ofs("outFileG.txt"); //output file for debugging and testing
-  ofs << "Hello world!" << endl;
+  //ofstream ofs("outFileG.txt"); //output file for debugging and testing
  // Do the 2D transform here.
   // 6) Send the resultant transformed values to the appropriate
   //    other processors for the next phase.
@@ -79,57 +78,108 @@ void Transform2D(const char* inputFN)
 
   // 1) Use the InputImage object to read in the Tower.txt file and
   //    find the width/height of the input image.
-  InputImage image(inputFN);  // Create the helper object for reading the image
+  // Create the helper object for reading the image
+  InputImage image(inputFN); 
   w = image.GetWidth();
   h = image.GetHeight();
 
   // 2) Use MPI to find how many CPUs in total, and which one this process is
   MPI_Comm_size(MPI_COMM_WORLD, &numCPUs); //how many CPUs? 
   MPI_Comm_rank(MPI_COMM_WORLD, &rank); //which CPU am I?
-  if(rank==1)
-  ofs  << "Number of tasks= " << numCPUs << ".  My rank= " << rank<< endl;
+  /*if(rank==1)
+  ofs  << "Number of tasks= " << numCPUs << ".  My rank= " << rank<< endl;*/
 
   // 3) Allocate an array of Complex object of sufficient size to
   //     hold the 2d DFT results (size is width * height)
   OneDResultArr = new Complex[w*h]; //output array. 
+  TwoDResultArr = new Complex[w*h];
  
   // 4) Obtain a pointer to the Complex 1d array of input data
   myData = image.GetImageData();
 
   // 5) Do the individual 1D transforms on the rows assigned to your CPU
   rowsPerCPU = h / numCPUs;
-  //if(rank==1)
-  //ofs<< "rowsPerCPU: " << rowsPerCPU << endl;
+  columnRecvArr = new Complex[rowsPerCPU*h];
+  int colsPerCPU = w / numCPUs;
   int rowStart = rowsPerCPU * rank; // the row I need to start my 1D transforms on
   int rowEnd = rowStart + rowsPerCPU; // the row I need to end on
-  //if(rank==1){
-  //ofs << "I need to start my transformations on row: " << rowStart 
-  //    << ". I need to end on row: " << rowEnd << endl;
-  //}
+  columnSendArr = new Complex[colsPerCPU*h];
+
   for(rowStart; rowStart<rowEnd;rowStart++)
     { // for each row of work 
     Complex* hPtr  = myData + rowStart *w; //where to start reading input data
     Complex* HPtr = OneDResultArr + rowStart *w; //where to start writing output data
     Transform1D(hPtr, w, HPtr); //transform that row and write into resultArray
-    } 
+    }
+     
+  int msgSize = rowsPerCPU*w * sizeof(Complex);
+
   if(rank != 0) // send my transform back to CPU 0 
-    {
-    //pointer to send  = OneDResultArr + rowsPerCPU* rank *width
-    rc = MPI_Send(OneDResultArr, w*h, MPI_COMPLEX, 0, 0, MPI_COMM_WORLD);
+    {//sendPtr points to where my rows start
+    sendPtr = OneDResultArr + rowsPerCPU*rank*w;
+    //each CPU sends its work back to CPU 0
+    rc = MPI_Send(sendPtr, msgSize, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
+    // now needs to receive the row array, perform transforms, and send row array back
     }
   if(rank == 0)
     { //my work is already in correct place in 1DResultArr
       //block recieve all the other ones
       for(int i = 1; i<numCPUs; i++)
-      { //recSize = rowsPerCPU * width
-        int recSize = w*h;
-        //recPtr = OneDResultArr + rowsPerCPU*i*w
+        { 
         MPI_Status status;
-        rc = MPI_Recv(recieveArr, recSize, MPI_COMPLEX, i, 0, MPI_COMM_WORLD, &status);
+        recvPtr = OneDResultArr + rowsPerCPU*i*w;
+        rc = MPI_Recv(recvPtr, msgSize, MPI_CHAR, i, 0, MPI_COMM_WORLD, &status);
+        }
+      //CPU0 now needs to send each column to the other CPUs
+      /*
+      int colMsgSize = colsPerCPU*h*sizeof(Complex);
+      for(int i=1;i<numCPUs; i++)//for each cpu
+      {//fill the send array and send it all its columns
+        int startCol = i*colsPerCPU;
+        for(int j = startCol;j<(startCol+colsPerCPU);j++)//for each column I need to send
+          {
+           //for each row I need to send
+           for(int r =0;r<h;r++)
+             {
+             //put data into send array
+             columnSendArr[j*w+r] = OneDResultArr[r*w +j];
+             }
+          }
+        //when columnSendArr is full, send it to the right CPU
+        //rc =  MPI_Send(columnSendArr,colMsgSize,MPI_CHAR,i,0,MPI_COMM_WORLD);
       }
-      image.SaveImageData("outData.txt", OneDResultArr, w, h);
+      */
+      //here CPU0 does its work on columns on OneDResultArr
+      for(int j = 0;j<colsPerCPU;j++)//for each column 
+        {
+        //for each row
+        for(int r =0;r<h;r++)
+          {
+          //put data into array (flipping columns into rows)
+          columnSendArr[j*w+r] = OneDResultArr[r*w+j];
+          }
+        }
+      
+      hPtr = columnSendArr;
+      HPtr = columnRecvArr;
+      for(int r =0; r<colsPerCPU;r++)//for each row in column array
+        {
+        Transform1D(hPtr, w, HPtr);
+        hPtr += w;
+        HPtr += w; 
+        }
+      //write results into columns of TwoDResultArray
+      for(int i=0;i<colsPerCPU;i++)//for each row 
+        {
+        //for each column
+        for(int j =0;j<w;j++)
+          {
+          //put data into array (flipping back into columns)
+          TwoDResultArr[j*w+i] = columnRecvArr[i*w+j]; 
+          }
+        }
+      image.SaveImageData("MyAfter2d.txt", TwoDResultArr, w, h);
     }
-
 }
 
 
@@ -148,6 +198,3 @@ int main(int argc, char** argv)
   MPI_Finalize(); 
  
 }  
-  
-
- 
